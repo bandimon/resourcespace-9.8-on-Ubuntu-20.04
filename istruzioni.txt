@@ -1,0 +1,57 @@
+Creazione della docker image :
+
+	docker build -t bandimon/resourcespace-9.8 .
+
+Esecuzione della docker image :
+
+	docker run -d -p 8000:80 -p 2022:22 --restart unless-stopped -v /<folder backup mysql>:/backupdb -v /<folder dati resourcespace>:/var/www/html/filestore bandimon/resourcespace-9.8
+
+per aggiungere il volume in readonly ed il tag di esecuzione:
+
+	docker run -d -p 8000:80 -p 2022:22 --restart unless-stopped -v /<folder backup mysql>:/backupdb -v /<folder dati resourcespace>:/var/www/html/filestore:ro --name resourcespace-9.8 bandimon/resourcespace-9.4
+
+
+
+conversione da latin1 a utf8mb4:
+	esportazione:
+		mysqldump resourcespace --no-data --skip-set-charset --default-character-set=latin1 | sed 's/CHARSET=latin1/CHARSET=utf8mb4/g' > resourcespace_schema.sql
+		mysqldump resourcespace --no-create-db --no-create-info --skip-set-charset --default-character-set=latin1 --resultfile=resourcespace_data.sql
+	importazione:
+		mysql resourcespace --default-character-set=utf8mb4 < resourcespace_schema.sql
+		mysql resourcespace --default-character-set=utf8mb4 < resourcespace_data.sql
+
+---------------------
+
+#installazione docker e creazione immagine per x86 ed ARM64 su un linux Debian
+sudo bash
+apt-get update
+apt-get upgrade
+apt-get install open-vm-tools-desktop curl binfmt-support qemu-user-static git gnome-terminal
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+service docker start
+docker buildx create --name mybuilder
+docker buildx use mybuilder
+docker buildx inspect --bootstrap
+git clone https://github.com/bandimon/resourcespace-9.8-on-Ubuntu-20.04
+cd resourcespace-9.8-on-Ubuntu-20.04
+docker login -u bandimon
+docker buildx build --platform linux/amd64,linux/arm64 -t bandimon/resourcespace-9.8:latest --push .
+
+
+#Installazione Portainer per la gestione (localhost:9000, cambiare la porta 8000 in 8100 se si vuole installare ResourceSpace nello stesso server)
+docker volume create portainer_data
+docker run -d -p 8000:8000 -p 9000:9000 --name=portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data portainer/portainer-ce
+
+
+#creazione dei volumi CIFS e partenza della VM Docker
+docker volume create --driver local --opt type=cifs --opt device=//172.16.249.128/RESOURCESPACE/Backup --opt o=addr=172.16.249.128,username=admin,password=nux13l4b,file_mode=0777,dir_mode=0777 --name ResourceSpaceBackup
+docker volume create --driver local --opt type=cifs --opt device=//172.16.249.128/RESOURCESPACE/Store --opt o=addr=172.16.249.128,username=admin,password=nux13l4b,file_mode=0777,dir_mode=0777 --name ResourceSpaceStore
+docker run -d -p 8000:80 -p 2022:22 --restart unless-stopped -v ResourceSpaceBackup:/backupdb -v ResourceSpaceStore:/var/www/html/filestore --name ResourceSpace-9.8 bandimon/resourcespace-9.8
+
+
+#Conversione della versione 7 del DB di ResourceSpace e caricamente del Backup del DB (da lanciare dentro la VM Docker)
+sed 's/CHARSET=latin1/CHARSET=utf8mb4/g' < resourcespace_schema.sql > resourcespace_schema_utf8.sql
+mysql resourcespace --default-character-set=utf8mb4 < resourcespace_schema_utf8.sql
+mysql resourcespace --default-character-set=utf8mb4 < resourcespace_data.sql 
+	
